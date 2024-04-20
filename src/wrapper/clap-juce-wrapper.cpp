@@ -1838,6 +1838,9 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
             }
         }
 
+        bool isShowing{false};
+        void setShowing(bool b) { isShowing = b; }
+
         void createEditor(juce::AudioProcessor &plugin)
         {
             editor.reset(plugin.createEditorIfNeeded());
@@ -1850,6 +1853,7 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
                 editor->setHostContext(editorHostContext.get());
 #endif
 #if !JUCE_MAC
+                std::cout << __FILE__ << ":" << __LINE__ << " SETTING SCALE FACTOR TO " << clapWrapper.guiScaleFactor << std::endl;
                 editor->setScaleFactor(clapWrapper.guiScaleFactor);
 #endif
 
@@ -1881,7 +1885,7 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
 
         juce::Rectangle<int> convertToHostBounds(juce::Rectangle<int> pluginRect)
         {
-            const auto desktopScale = clapWrapper.guiScaleFactor;
+            const auto desktopScale = clapWrapper.guiScaleFactor; // * std::min(juce::Desktop::getInstance().getGlobalScaleFactor(), 1.f);
             if (juce::isWithin(desktopScale, 1.0f, 1.0e-3f))
                 return pluginRect;
 
@@ -1896,12 +1900,14 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
             if (editor != nullptr)
             {
                 auto editorBounds = getSizeToContainChild().withPosition(0, 0);
+                if (isShowing && host.canUseGui())
                 {
                     const juce::ScopedValueSetter<bool> resizingParentSetter(resizingParent, true);
                     host.guiRequestResize((uint32_t)editorBounds.getWidth(),
                                           (uint32_t)editorBounds.getHeight());
                 }
 
+                std::cout << __FILE__ << ":" << __LINE__ << " Setting editorbounds to " << editorBounds.getWidth() << "x" << editorBounds.getHeight() << std::endl;
                 setBounds(editorBounds.withPosition(0, 0));
             }
         }
@@ -1910,16 +1916,24 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
         {
             if (editor != nullptr)
             {
+                std::cout << __FILE__ << ":" << __LINE__ << " setEditorScaleFactor " << clapWrapper.guiScaleFactor << " " << scale << std::endl;
                 auto prevEditorBounds = editor->getLocalArea(this, lastBounds);
+
+                std::cout << __FILE__ << ":" << __LINE__ << " prevEditorBounds " << prevEditorBounds.getWidth()
+                << "x" << prevEditorBounds.getHeight() << std::endl;
 
                 {
                     const juce::ScopedValueSetter<bool> resizingChildSetter{resizingChild, true};
 
-                    editor->setScaleFactor(scale);
+                    auto dsf = std::max(juce::Desktop::getInstance().getGlobalScaleFactor(), 1.f);
+                    // dsf = 1.5;
+                    std::cout << __FILE__ << ":" << __LINE__ << " DSF is " << dsf << std::endl;
+                    editor->setScaleFactor(scale * dsf);
                     editor->setBounds(prevEditorBounds.withPosition(0, 0));
                 }
 
                 lastBounds = getSizeToContainChild();
+                std::cout << __FILE__ << ":" << __LINE__ << " lastBounds " << lastBounds.getWidth() << "x" << lastBounds.getHeight() << std::endl;
 
                 resizeHostWindow();
                 repaint();
@@ -2024,10 +2038,19 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
 #if JUCE_MAC || JUCE_LINUX || JUCE_WINDOWS
         if (editorWrapper != nullptr && editorWrapper->editor != nullptr)
         {
+            editorWrapper->setShowing(true);
             return guiParentAttached;
         }
 #endif
         return false;
+    }
+
+    bool guiHide() noexcept override
+    {
+        if (editorWrapper) {
+            editorWrapper->setShowing(false);
+        }
+        return true;
     }
 
     bool guiCanResize() const noexcept override
@@ -2039,6 +2062,7 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
 
     bool guiSetScale(double scale) noexcept override
     {
+        std::cout << __FILE__ << ":" << __LINE__ << " guiSetScale " << scale << " " << editorWrapper.get() << std::endl;
         if (scale > 50)
         {
             // this is almost definitely a units error
@@ -2134,6 +2158,8 @@ class ClapJuceWrapper : public clap::helpers::Plugin<
             const auto b = editorWrapper->getBounds();
             *width = (uint32_t)b.getWidth();
             *height = (uint32_t)b.getHeight();
+            std::cout << __FILE__ << ":" << __LINE__ << " guiGetSize " << *width << "x" << *height << std::endl;
+
             return true;
         }
         else
